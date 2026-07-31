@@ -14,7 +14,7 @@ permissions:
   actions: write
 env:
   UPSTREAM_OWNER: "AstideLabs"
-  UPSTASH_REPO: "android_kernel_xiaomi_sm8250"
+  UPSTREAM_REPO: "android_kernel_xiaomi_sm8250"  # ✅ 修正拼写，原来是UPSTASH_REPO
   SYNC_INTERVAL_HOURS: 72
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
