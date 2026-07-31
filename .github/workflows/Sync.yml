@@ -1,21 +1,64 @@
 name: Sync Upstream
 on:
- schedule:
-  - cron: "0 22 */3 * *"
- workflow_dispatch:
+  schedule:
+    - cron: "0 22 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force sync regardless of interval"
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: write
   actions: write
 env:
   UPSTREAM_OWNER: "AstideLabs"
   UPSTREAM_REPO: "android_kernel_xiaomi_sm8250"
+  SYNC_INTERVAL_HOURS: 72
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         branch: ["android16-aptusitu", "android16-aptusitu-new"]
     steps:
+      - name: Check sync interval
+        id: check_time
+        run: |
+          mkdir -p .github
+          TIMESTAMP_FILE=".github/sync_last_run.txt"
+          CURRENT_TIME=$(date -u +%s)
+          if [[ "${{ github.event.inputs.force }}" == "true" ]]; then
+            echo "Force sync triggered manually"
+            echo "should_sync=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          if [ ! -f "$TIMESTAMP_FILE" ]; then
+            echo "First run, no previous sync record"
+            echo "should_sync=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          LAST_RUN=$(cat "$TIMESTAMP_FILE")
+          INTERVAL_SECONDS=$((SYNC_INTERVAL_HOURS * 3600))
+          ELAPSED=$((CURRENT_TIME - LAST_RUN))
+          if [ $ELAPSED -ge $INTERVAL_SECONDS ]; then
+            echo "Interval met ($ELAPSED seconds since last sync)"
+            echo "should_sync=true" >> $GITHUB_OUTPUT
+          else
+            REMAINING=$((INTERVAL_SECONDS - ELAPSED))
+            echo "Sync interval not met. Next sync in ~$((REMAINING / 3600)) hours"
+            echo "should_sync=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Skip if not time yet
+        if: steps.check_time.outputs.should_sync != 'true'
+        run: |
+          echo "Skipping sync - interval not reached"
+          exit 0
       - uses: actions/checkout@v4
         with:
           ref: ${{ matrix.branch }}
@@ -37,3 +80,12 @@ jobs:
           git remote set-url origin https://x-access-token:${{ secrets.cctv77 }}@github.com/cctv77/Fraud.git
           git push --force origin ${{ matrix.branch }}
           git push origin --tags
+      - name: Update last sync timestamp
+        if: success() && steps.check_time.outputs.should_sync == 'true' && matrix.branch == 'android16-aptusitu'
+        run: |
+          date -u +%s > .github/sync_last_run.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/sync_last_run.txt
+          git commit -m "Update last sync timestamp [$(date -u +"%Y-%m-%dT%H:%M:%SZ")]" || true
+          git push origin HEAD
