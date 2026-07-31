@@ -14,7 +14,7 @@ permissions:
   actions: write
 env:
   UPSTREAM_OWNER: "AstideLabs"
-  UPSTREAM_REPO: "android_kernel_xiaomi_sm8250"
+  UPSTASH_REPO: "android_kernel_xiaomi_sm8250"
   SYNC_INTERVAL_HOURS: 72
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -34,12 +34,10 @@ jobs:
           TIMESTAMP_FILE=".github/sync_last_run.txt"
           CURRENT_TIME=$(date -u +%s)
           if [[ "${{ github.event.inputs.force }}" == "true" ]]; then
-            echo "Force sync triggered manually"
             echo "should_sync=true" >> $GITHUB_OUTPUT
             exit 0
           fi
           if [ ! -f "$TIMESTAMP_FILE" ]; then
-            echo "First run, no previous sync record"
             echo "should_sync=true" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -47,11 +45,8 @@ jobs:
           INTERVAL_SECONDS=$((SYNC_INTERVAL_HOURS * 3600))
           ELAPSED=$((CURRENT_TIME - LAST_RUN))
           if [ $ELAPSED -ge $INTERVAL_SECONDS ]; then
-            echo "Interval met ($ELAPSED seconds since last sync)"
             echo "should_sync=true" >> $GITHUB_OUTPUT
           else
-            REMAINING=$((INTERVAL_SECONDS - ELAPSED))
-            echo "Sync interval not met. Next sync in ~$((REMAINING / 3600)) hours"
             echo "should_sync=false" >> $GITHUB_OUTPUT
           fi
       - name: Skip if not time yet
@@ -74,8 +69,10 @@ jobs:
           git reset --hard upstream/${{ matrix.branch }}
       - run: |
           rm -rf .github/workflows/
+          sed -i '/\.github\//d' .gitignore || true
+          sed -i '/\.github\/\*/d' .gitignore || true
           git add .
-          git commit -m "Remove upstream workflows" || true
+          git commit -m "Sync upstream & remove upstream workflows" || true
       - run: |
           git remote set-url origin https://x-access-token:${{ secrets.cctv77 }}@github.com/cctv77/Fraud.git
           git push --force origin ${{ matrix.branch }}
@@ -84,8 +81,6 @@ jobs:
         if: success() && steps.check_time.outputs.should_sync == 'true' && matrix.branch == 'android16-aptusitu'
         run: |
           date -u +%s > .github/sync_last_run.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add .github/sync_last_run.txt
+          git add -f .github/sync_last_run.txt
           git commit -m "Update last sync timestamp [$(date -u +"%Y-%m-%dT%H:%M:%SZ")]" || true
           git push origin HEAD
