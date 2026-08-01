@@ -5,7 +5,7 @@ on:
       device:
         description: 'Target Device Code (设备代号)'
         required: true
-        default: 'lmi'
+        default: 'alioth'
         type: choice
         options:
           - alioth
@@ -30,7 +30,7 @@ on:
         description: 'Target OS (目标系统)'
         required: true
         type: choice
-        default: 'aosp'
+        default: 'miui'
         options:
           - aosp
           - miui
