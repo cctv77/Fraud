@@ -89,6 +89,38 @@ jobs:
         ./build_kernel.sh $ARGS
         ZIP_FILE=$(ls *.zip)
         echo "zip_path=${ZIP_FILE}" >> $GITHUB_OUTPUT
+    - name: Print final kernel version
+      id: print_version
+      if: always()
+      run: |
+        set -euo pipefail
+        echo "Searching for kernel image..."
+        # look for common kernel image names (adjust maxdepth if your build places them deeper)
+        FILE=$(find . -maxdepth 6 -type f \( -name 'Image' -o -name 'Image.gz' -o -name 'zImage' -o -name 'vmlinuz' -o -name 'bzImage' -o -name '*.img' \) | head -n1 || true)
+        if [ -z "$FILE" ]; then
+          FILE=$(find . -maxdepth 6 -type f -name 'System.map' | head -n1 || true)
+        fi
+        if [ -z "$FILE" ]; then
+          echo "No kernel image nor System.map found to extract version."
+          echo "kernel_version=unknown" >> $GITHUB_OUTPUT || true
+          exit 0
+        fi
+        echo "Found candidate: $FILE"
+        if echo "$FILE" | grep -qE '\.gz$'; then
+          STRINGS_CMD="gunzip -c \"$FILE\" | strings"
+        else
+          STRINGS_CMD="strings \"$FILE\""
+        fi
+        VER=$(/bin/sh -c "$STRINGS_CMD" | grep -a -m1 -E 'Linux version [0-9]+\.[0-9]+(\.[0-9]+)?' || true)
+        if [ -z "$VER" ]; then
+          VER=$(strings "$FILE" | grep -a -m1 -E 'Kernel command line|Linux version' || true)
+        fi
+        if [ -n "$VER" ]; then
+          echo "kernel_version=$VER" >> $GITHUB_OUTPUT
+          echo "Final kernel version: $VER"
+        else
+          echo "Could not detect kernel version from $FILE"
+          echo "kernel_version=unknown" >> $GITHUB_OUTPUT
     - name: Upload Flashable ZIP
       uses: actions/upload-artifact@v7
       with:
