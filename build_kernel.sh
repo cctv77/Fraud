@@ -47,7 +47,6 @@ export CROSS_COMPILE="aarch64-linux-gnu-"
 export CROSS_COMPILE_ARM32="arm-linux-gnueabi-"
 
 echo "[*] Cleaning Git working tree (original repo)..."
-# keep original repo clean, but we will build from a separate copy
 if git rev-parse --git-dir >/dev/null 2>&1; then
     git reset --hard HEAD
     git clean -fd
@@ -62,7 +61,6 @@ rm -rf anykernel
 git clone https://github.com/AstideLabs/AnyKernel3 -b master --single-branch --depth=1 anykernel || { echo "[!] Failed to clone AnyKernel3"; exit 1; }
 echo "[+] AnyKernel3 ready."
 
-# build_target will create a temporary source copy (.build_src_<OS>) and run make there
 build_target() {
     local OS_TYPE=$1
     echo "==========================================="
@@ -73,13 +71,11 @@ build_target() {
     rm -rf "${OUT_DIR}"
     mkdir -p "${OUT_DIR}"
 
-    # Create a temporary build source tree without .git to avoid dirty tree issues
     local BUILD_SRC="${KERNEL_DIR}/.build_src_${OS_TYPE}"
     rm -rf "${BUILD_SRC}"
     mkdir -p "${BUILD_SRC}"
 
     echo "[*] Copying source to temporary build directory (${BUILD_SRC})..."
-    # Exclude .git, output dirs, anykernel, previous build_src copies and ZIP files
     rsync -a --exclude='.git' \
               --exclude='out_*' \
               --exclude='anykernel' \
@@ -88,36 +84,29 @@ build_target() {
               --exclude='.github' \
               "${KERNEL_DIR}/" "${BUILD_SRC}/"
 
-    # Work inside BUILD_SRC from now on
     pushd "${BUILD_SRC}" >/dev/null
 
-    # Ensure config-related tools use kernel CONFIG_ prefix and prefer local scripts
     export CONFIG_="CONFIG_"
     export PATH="$(pwd)/scripts:${PATH}"
 
-    # If KernelSU is needed, set it up inside BUILD_SRC (so original repo remains clean)
     if [ "$ENABLE_KSU" -eq 1 ]; then
         echo "[*] Setting up KernelSU inside build copy..."
         curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash
         echo "[+] KernelSU done."
     fi
 
-    # Baseband-guard inside build copy
     echo "[*] Setting up Baseband-guard inside build copy..."
     wget -qO- https://github.com/vc-teahouse/Baseband-guard/raw/main/setup.sh | bash
-    # modify security/Kconfig inside build copy (if present)
     if [ -f security/Kconfig ]; then
         sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' security/Kconfig || true
     fi
     echo "[+] Baseband-guard done."
 
-    # DTS modifications only inside build copy when building MIUI
     local DTS_SOURCE="arch/arm64/boot/dts/vendor/qcom"
     local DTS_BACKUP=".dts.bak.${OS_TYPE}"
     if [ "$OS_TYPE" == "miui" ]; then
         if [ -d "${DTS_SOURCE}" ]; then
             cp -a "${DTS_SOURCE}" "${DTS_BACKUP}"
-            # apply same sed modifications as original, but within build copy
             sed -i 's/<154>/<1537>/g' ${DTS_SOURCE}/dsi-panel-j1s* || true
             sed -i 's/<154>/<1537>/g' ${DTS_SOURCE}/dsi-panel-j2* || true
             sed -i 's/<155>/<1544>/g' ${DTS_SOURCE}/dsi-panel-j3s-37-02-0a-dsc-video.dtsi || true
@@ -144,8 +133,7 @@ build_target() {
             sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${DTS_SOURCE}/dsi-panel-j1s-42-02-0a-mp-dsc-cmd.dtsi || true
             sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${DTS_SOURCE}/dsi-panel-j2-mp-42-02-0b-dsc-cmd.dtsi || true
             sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${DTS_SOURCE}/dsi-panel-j2-p2-1-42-02-0b-dsc-cmd.dtsi || true
-            sed -i 's/\/\/39 00 00 00 00 00 05 51 0F 8F 00 00/39 00 00 00 00 00 05 51 0F 8F 00 00/g' ${DTS_SOURCE}/dsi-panel-j2s-mp-42-02-0a-dsc-cmd.dtsi || true
-            sed -i 's/\/\/39 01 00 00 00 00 03 51 00 00/39 01 00 00 00 00 03 51 00 00/g' ${DTS_SOURCE}/dsi-panel-j2-38-0c-0a-dsc-cmd.dtsi || true
+            sed -i 's/\/\/39 01 00 00 00 00 03 51 00 00/39 01 00 00 00 00 03 51 00 00/g' ${DTS_SOURCE}/dsi-panel-j11-38-08-0a-fhd-cmd.dtsi || true
             sed -i 's/\/\/39 01 00 00 00 00 03 51 03 FF/39 01 00 00 00 00 03 51 03 FF/g' ${DTS_SOURCE}/dsi-panel-j11-38-08-0a-fhd-cmd.dtsi || true
             sed -i 's/\/\/39 01 00 00 00 00 03 51 03 FF/39 01 00 00 00 00 03 51 03 FF/g' ${DTS_SOURCE}/dsi-panel-j9-38-0a-0a-fhd-video.dtsi || true
             sed -i 's/\/\/39 01 00 00 00 00 03 51 07 FF/39 01 00 00 00 00 03 51 07 FF/g' ${DTS_SOURCE}/dsi-panel-j1u-42-02-0b-dsc-cmd.dtsi || true
@@ -212,14 +200,12 @@ build_target() {
             -d REKERNEL_NETWORK
     fi
 
-    # ===== 版本锁定（核心）=====
     if [ "$OS_TYPE" == "miui" ]; then
         if [ "$DEVICE_NAME" = "alioth" ]; then
             SUBLEVEL=157
             HASH="92c089fc2d37"
         else
             SUBLEVEL=325
-            # Prefer BUILD_HASH from environment (CI), otherwise try local git
             if [ -n "${BUILD_HASH:-}" ]; then
                 HASH="$BUILD_HASH"
             else
@@ -234,7 +220,6 @@ build_target() {
             fi
         fi
 
-        # Modify Makefile inside build copy only (do not touch original repo)
         if [ -f Makefile ]; then
             sed -E -i "s/^(SUBLEVEL[[:space:]]*=[[:space:]]*).*/\1${SUBLEVEL}/" Makefile || true
             sed -E -i "s/^(EXTRAVERSION[[:space:]]*=[[:space:]]*).*/\1/" Makefile || true
@@ -242,16 +227,13 @@ build_target() {
             echo "[!] Makefile not found in build copy"; popd >/dev/null; rm -rf "${BUILD_SRC}"; exit 1
         fi
 
-        # Set LOCALVERSION in config to include -gHASH and disable LOCALVERSION_AUTO (via scripts/config)
         "$(pwd)/scripts/config" --file "${OUT_DIR}/.config" \
             --set-val CONFIG_LOCALVERSION_AUTO n \
             --set-str LOCALVERSION "-perf-g${HASH}"
 
-        # Write kernel.release as redundancy
         mkdir -p "${OUT_DIR}/include/config"
         echo "4.19.${SUBLEVEL}-perf-g${HASH}" > "${OUT_DIR}/include/config/kernel.release"
 
-        # KBUILD env (alioth only)
         if [ "$DEVICE_NAME" = "alioth" ]; then
             export KBUILD_BUILD_USER="builder"
             export KBUILD_BUILD_HOST="pangu-build-component-vendor-727090-8pdx4-w2b4x-lb74b"
@@ -259,35 +241,26 @@ build_target() {
             export KBUILD_BUILD_VERSION=1
         fi
 
-        # -------------------------------------------------------------------
-        # Ensure OUT_DIR/.config actually contains the desired CONFIG_LOCALVERSION
-        # (defconfig may have set CONFIG_LOCALVERSION="-aptusitu-perf", so overwrite it)
         OUT_CFG="${OUT_DIR}/.config"
         LOCAL_STR="-perf-g${HASH}"
 
-        # Use build copy's scripts/config to set LOCALVERSION_AUTO off (best-effort)
         "$(pwd)/scripts/config" --file "${OUT_CFG}" --set-val CONFIG_LOCALVERSION_AUTO n || true
 
-        # Overwrite or append CONFIG_LOCALVERSION in the generated .config
         if grep -q '^CONFIG_LOCALVERSION=' "${OUT_CFG}" 2>/dev/null; then
-            sed -i 's@^CONFIG_LOCALVERSION=.*@CONFIG_LOCALVERSION="'"${LOCAL_STR}"'"@' "${OUT_CFG}" || true
+            sed -i 's@^CONFIG_LOCALVERSION=.*@CONFIG_LOCALVERSION="'"${LOCAL_STR}"'@' "${OUT_CFG}" || true
         else
             echo "CONFIG_LOCALVERSION=\"${LOCAL_STR}\"" >> "${OUT_CFG}" || true
         fi
 
-        # Remove any .scmversion files to avoid setlocalversion appending '+'
         rm -f .scmversion "${KERNEL_DIR}/.scmversion" || true
 
-        # Re-write kernel.release as redundancy (include local_str)
         echo "4.19.${SUBLEVEL}${LOCAL_STR}" > "${OUT_DIR}/include/config/kernel.release" || true
 
-        # Print kernelrelease and final kernel.release into CI logs for verification (does NOT change zip)
         echo "[*] CI-VERIFY: kernelrelease (for CI log only):"
         make -s O="${OUT_DIR}" kernelrelease || true
         if [ -f "${OUT_DIR}/include/config/kernel.release" ]; then
             echo "FINAL_KERNEL_RELEASE: $(cat "${OUT_DIR}/include/config/kernel.release")"
         fi
-        # -------------------------------------------------------------------
     fi
 
     echo "[*] Updating config (olddefconfig)..."
@@ -303,12 +276,44 @@ build_target() {
         CC="ccache clang" HOSTCC="ccache clang" \
         CROSS_COMPILE="${CROSS_COMPILE}" CROSS_COMPILE_ARM32="${CROSS_COMPILE_ARM32}"
 
-    # leave BUILD_SRC
+    {
+        echo "[*] Detecting kernel version before packaging..."
+        KERNEL_CANDIDATE=""
+        if [ -n "${OUT_DIR:-}" ]; then
+            KERNEL_CANDIDATE=$(find "${OUT_DIR}" -maxdepth 6 -type f \( -name 'Image' -o -name 'Image.gz' -o -name 'zImage' -o -name 'vmlinux' -o -name 'vmlinuz' -o -name 'System.map' \) 2>/dev/null | head -n1 || true)
+        fi
+        if [ -z "$KERNEL_CANDIDATE" ]; then
+            KERNEL_CANDIDATE=$(find . -maxdepth 8 -type f -name '*.img' ! -iname '*dtbo*' 2>/dev/null | head -n1 || true)
+        fi
+        if [ -z "$KERNEL_CANDIDATE" ]; then
+            echo "No kernel candidate found during build"
+            echo "unknown" > "${KERNEL_DIR}/kernel_version.txt" || true
+        else
+            echo "Found kernel candidate: $KERNEL_CANDIDATE"
+            if echo "$KERNEL_CANDIDATE" | grep -qE '\.gz$'; then
+                STRINGS_CMD="gunzip -c \"$KERNEL_CANDIDATE\" | strings -a"
+            else
+                STRINGS_CMD="strings -a \"$KERNEL_CANDIDATE\""
+            fi
+            VER=$(/bin/sh -c "$STRINGS_CMD" | grep -a -m1 -E 'Linux version [0-9]+\.[0-9]+' || true)
+            if [ -z "$VER" ]; then
+                VER=$(/bin/sh -c "$STRINGS_CMD" | grep -a -m1 -E 'Kernel command line|Linux version' || true)
+            fi
+            if [ -n "$VER" ]; then
+                echo "Detected kernel version: $VER"
+                echo "$VER" > "${KERNEL_DIR}/kernel_version.txt" || true
+            else
+                echo "Could not detect kernel version from $KERNEL_CANDIDATE"
+                echo "unknown" > "${KERNEL_DIR}/kernel_version.txt" || true
+            fi
+        fi
+    } || true
+
     popd >/dev/null
 
-    # Packaging
     if [ -f "${OUT_DIR}/arch/arm64/boot/Image" ]; then
         echo "[+] Build Successful!"
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep "Linux version"
         find "${OUT_DIR}/arch/arm64/boot/dts" -name '*.dtb' -exec cat {} + > "${OUT_DIR}/arch/arm64/boot/dtb" || true
 
         rm -rf "${KERNEL_DIR}/anykernel/kernels/*"
@@ -324,12 +329,10 @@ build_target() {
         echo "[+] Packed: ${ZIP}"
     else
         echo "[-] Build Failed."
-        # Clean up build copy before exit
         rm -rf "${BUILD_SRC}" || true
         exit 1
     fi
 
-    # cleanup temporary build copy
     rm -rf "${BUILD_SRC}" || true
 }
 
