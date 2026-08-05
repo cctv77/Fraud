@@ -227,10 +227,15 @@ build_target() {
             echo "[!] Makefile not found in build copy"; popd >/dev/null; rm -rf "${BUILD_SRC}"; exit 1
         fi
 
-        "$(pwd)/scripts/config" --file "${OUT_DIR}/.config" \
+        # 关键修正：使用 scripts/config 正确设置 LOCALVERSION
+        scripts/config --file "${OUT_DIR}/.config" \
             --set-val CONFIG_LOCALVERSION_AUTO n \
             --set-str LOCALVERSION "-perf-g${HASH}"
 
+        # 清理 scmversion 文件，防止自动追加版本信息
+        rm -f .scmversion "${KERNEL_DIR}/.scmversion" "${OUT_DIR}/.scmversion" 2>/dev/null || true
+
+        # 同步 kernel.release
         mkdir -p "${OUT_DIR}/include/config"
         echo "4.19.${SUBLEVEL}-perf-g${HASH}" > "${OUT_DIR}/include/config/kernel.release"
 
@@ -240,21 +245,6 @@ build_target() {
             export KBUILD_BUILD_TIMESTAMP="Wed Oct 29 11:41:46 UTC 2025"
             export KBUILD_BUILD_VERSION=1
         fi
-
-        OUT_CFG="${OUT_DIR}/.config"
-        LOCAL_STR="-perf-g${HASH}"
-
-        "$(pwd)/scripts/config" --file "${OUT_CFG}" --set-val CONFIG_LOCALVERSION_AUTO n || true
-
-        if grep -q '^CONFIG_LOCALVERSION=' "${OUT_CFG}" 2>/dev/null; then
-            sed -i 's@^CONFIG_LOCALVERSION=.*@CONFIG_LOCALVERSION="'"${LOCAL_STR}"'@' "${OUT_CFG}" || true
-        else
-            echo "CONFIG_LOCALVERSION=\"${LOCAL_STR}\"" >> "${OUT_CFG}" || true
-        fi
-
-        rm -f .scmversion "${KERNEL_DIR}/.scmversion" || true
-
-        echo "4.19.${SUBLEVEL}${LOCAL_STR}" > "${OUT_DIR}/include/config/kernel.release" || true
 
         echo "[*] CI-VERIFY: kernelrelease (for CI log only):"
         make -s O="${OUT_DIR}" kernelrelease || true
@@ -276,44 +266,18 @@ build_target() {
         CC="ccache clang" HOSTCC="ccache clang" \
         CROSS_COMPILE="${CROSS_COMPILE}" CROSS_COMPILE_ARM32="${CROSS_COMPILE_ARM32}"
 
-    {
-        echo "[*] Detecting kernel version before packaging..."
-        KERNEL_CANDIDATE=""
-        if [ -n "${OUT_DIR:-}" ]; then
-            KERNEL_CANDIDATE=$(find "${OUT_DIR}" -maxdepth 6 -type f \( -name 'Image' -o -name 'Image.gz' -o -name 'zImage' -o -name 'vmlinux' -o -name 'vmlinuz' -o -name 'System.map' \) 2>/dev/null | head -n1 || true)
-        fi
-        if [ -z "$KERNEL_CANDIDATE" ]; then
-            KERNEL_CANDIDATE=$(find . -maxdepth 8 -type f -name '*.img' ! -iname '*dtbo*' 2>/dev/null | head -n1 || true)
-        fi
-        if [ -z "$KERNEL_CANDIDATE" ]; then
-            echo "No kernel candidate found during build"
-            echo "unknown" > "${KERNEL_DIR}/kernel_version.txt" || true
-        else
-            echo "Found kernel candidate: $KERNEL_CANDIDATE"
-            if echo "$KERNEL_CANDIDATE" | grep -qE '\.gz$'; then
-                STRINGS_CMD="gunzip -c \"$KERNEL_CANDIDATE\" | strings -a"
-            else
-                STRINGS_CMD="strings -a \"$KERNEL_CANDIDATE\""
-            fi
-            VER=$(/bin/sh -c "$STRINGS_CMD" | grep -a -m1 -E 'Linux version [0-9]+\.[0-9]+' || true)
-            if [ -z "$VER" ]; then
-                VER=$(/bin/sh -c "$STRINGS_CMD" | grep -a -m1 -E 'Kernel command line|Linux version' || true)
-            fi
-            if [ -n "$VER" ]; then
-                echo "Detected kernel version: $VER"
-                echo "$VER" > "${KERNEL_DIR}/kernel_version.txt" || true
-            else
-                echo "Could not detect kernel version from $KERNEL_CANDIDATE"
-                echo "unknown" > "${KERNEL_DIR}/kernel_version.txt" || true
-            fi
-        fi
-    } || true
-
     popd >/dev/null
 
     if [ -f "${OUT_DIR}/arch/arm64/boot/Image" ]; then
         echo "[+] Build Successful!"
-        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep "Linux version"
+        
+        # 在打包前打印内核版本信息
+        echo "==========================================="
+        echo "[*] FINAL KERNEL VERSION CHECK (pre-pack)"
+        echo "==========================================="
+        strings "${OUT_DIR}/arch/arm64/boot/Image" | grep "Linux version" || echo "[!] Linux version not found in Image!"
+        echo "==========================================="
+        
         find "${OUT_DIR}/arch/arm64/boot/dts" -name '*.dtb' -exec cat {} + > "${OUT_DIR}/arch/arm64/boot/dtb" || true
 
         rm -rf "${KERNEL_DIR}/anykernel/kernels/*"
