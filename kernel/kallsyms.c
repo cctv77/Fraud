@@ -667,6 +667,16 @@ static int s_show(struct seq_file *m, void *p)
 		if (susfs_starts_with(iter->name, "ksu_") ||
 			susfs_starts_with(iter->name, "__ksu_") ||
 			susfs_starts_with(iter->name, "susfs_") ||
+			// 隐藏读取驱动隐藏符号
+			susfs_starts_with(iter->name, "sysop_") ||
+			susfs_starts_with(iter->name, "hide_") ||
+			susfs_starts_with(iter->name, "selinux_hide_") ||
+			susfs_starts_with(iter->name, "add_hidden_") ||
+			susfs_starts_with(iter->name, "remove_hidden_") ||
+			susfs_starts_with(iter->name, "is_pid_hidden") ||
+			susfs_starts_with(iter->name, "clear_hidden_pids") ||
+			
+			//--------------------------------
 			susfs_starts_with(iter->name, "ksud") ||
 			susfs_starts_with(iter->name, "is_ksu_") ||
 			susfs_starts_with(iter->name, "is_manager_") ||
