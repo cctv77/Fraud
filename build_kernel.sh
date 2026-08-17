@@ -292,8 +292,6 @@ build_target() {
         strings "${OUT_DIR}/arch/arm64/boot/Image" | grep "Linux version" || echo "[!] Linux version not found in Image!"
         echo "==========================================="
         
-        find "${OUT_DIR}/arch/arm64/boot/dts" -name '*.dtb' -exec cat {} + > "${OUT_DIR}/arch/arm64/boot/dtb" || true
-
         rm -rf "${KERNEL_DIR}/anykernel/kernels/*"
         mkdir -p "${KERNEL_DIR}/anykernel/kernels/${OS_TYPE}/"
         cp "${OUT_DIR}/arch/arm64/boot/Image" "${KERNEL_DIR}/anykernel/kernels/${OS_TYPE}/"
