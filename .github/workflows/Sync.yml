@@ -14,7 +14,7 @@ permissions:
   actions: write
 env:
   UPSTREAM_OWNER: "AstideLabs"
-  UPSTREAM_REPO: "android_kernel_xiaomi_sm8250"  # ✅ 修正拼写，原来是UPSTASH_REPO
+  UPSTREAM_REPO: "android_kernel_xiaomi_sm8250"
   SYNC_INTERVAL_HOURS: 72
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       matrix:
-        branch: ["android16-aptusitu", "android16-aptusitu-new"]
+        branch: ["android16-aptusitu", "android17-aptusitu"]
     steps:
       - name: Check sync interval
         id: check_time
