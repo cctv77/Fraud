@@ -21,7 +21,7 @@ jobs:
             sudo apt update && sudo apt install -y gh
           }
 
-      - name: Delete old runs, keep latest 3 per workflow
+      - name: Delete old runs, keep latest 2 per workflow
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -36,13 +36,13 @@ jobs:
             wf_name=$(echo "$wf" | jq -r '.name')
             echo "=== Processing: $wf_name (id=$wf_id) ==="
 
-            # 获取该 workflow 所有运行记录，按创建时间倒序，跳过前 3 条
+            # 获取该 workflow 所有运行记录，按创建时间倒序，跳过前 2 条
             runs_to_delete=$(gh api "repos/$REPO/actions/workflows/$wf_id/runs?per_page=100" \
-              --jq '.workflow_runs | sort_by(.created_at) | reverse | .[3:] | .[].id')
+              --jq '.workflow_runs | sort_by(.created_at) | reverse | .[2:] | .[].id')
 
             count=$(echo "$runs_to_delete" | grep -c . || true)
             if [ "$count" -eq 0 ]; then
-              echo "  ✅ 不超过3条，无需清理"
+              echo "  ✅ 不超过2条，无需清理"
               continue
             fi
 
