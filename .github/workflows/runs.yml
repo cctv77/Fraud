@@ -79,7 +79,6 @@ jobs:
 
           # 按 key 分组，每组按最近使用时间倒序，跳过最新 1 条
           to_delete=$(jq -s -r '
-            group_by(.key)[]
             | sort_by(.last_accessed_at // .created_at // "")
             | reverse
             | .[1:][]
