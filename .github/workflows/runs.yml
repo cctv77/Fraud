@@ -1,13 +1,17 @@
-name: Cleanup old workflow runs
+name: Cleanup old workflow runs and caches
 
 on:
   schedule:
-    - cron: '0 3 1 * *'   # 每月1号 UTC 03:00 执行
+    - cron: '0 3 * * 1'   # 每周一 UTC 03:00（北京时间 11:00）
   workflow_dispatch:
 
 permissions:
   actions: write
   contents: read
+
+concurrency:
+  group: cleanup-runs-caches
+  cancel-in-progress: false
 
 jobs:
   cleanup:
@@ -26,77 +30,74 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          set -e
+          set -euo pipefail
+          gh api --paginate "repos/$REPO/actions/workflows" \
+            | jq -c '.workflows[] | {id, name}' > wf.jsonl
 
-          # 获取所有 workflow 的 ID 和名称
-          workflows=$(gh api repos/$REPO/actions/workflows --jq '.workflows[] | {id, name}')
-
-          echo "$workflows" | jq -c '.' | while read -r wf; do
+          ok=0; fail=0
+          while IFS= read -r wf; do
             wf_id=$(echo "$wf" | jq -r '.id')
             wf_name=$(echo "$wf" | jq -r '.name')
-            echo "=== Processing: $wf_name (id=$wf_id) ==="
+            echo "=== $wf_name (id=$wf_id) ==="
 
-            # 获取该 workflow 所有运行记录，按创建时间倒序，跳过前 1 条
-            runs_to_delete=$(gh api "repos/$REPO/actions/workflows/$wf_id/runs?per_page=100" \
-              --jq '.workflow_runs | sort_by(.created_at) | reverse | .[1:] | .[].id')
+            gh api "repos/$REPO/actions/workflows/$wf_id/runs?per_page=100" \
+              --jq '.workflow_runs | sort_by(.created_at) | reverse | .[1:] | .[].id' > r.txt
 
-            count=$(echo "$runs_to_delete" | grep -c . || true)
-            if [ "$count" -eq 0 ]; then
-              echo "  ✅ 不超过1条，无需清理"
-              continue
-            fi
+            [ -s r.txt ] || { echo "  ✅ 不超过1条，跳过"; continue; }
+            echo "  🗑️ 待删 $(wc -l < r.txt | tr -d ' ') 条"
 
-            echo "  🗑️  将删除 $count 条旧记录"
-            echo "$runs_to_delete" | while read -r run_id; do
-              gh api -X DELETE "repos/$REPO/actions/runs/$run_id" && echo "  ✅ 已删除 run $run_id" || echo "  ❌ 删除 run $run_id 失败"
-            done
-          done
+            while read -r run_id; do
+              [ -z "$run_id" ] && continue
+              if gh api -X DELETE "repos/$REPO/actions/runs/$run_id" >/dev/null 2>&1; then
+                ok=$((ok+1))
+              else
+                fail=$((fail+1)); echo "  ❌ run $run_id 删除失败"
+              fi
+            done < r.txt
+          done < wf.jsonl
 
-          echo "🎉 全部清理完成"
+          echo "🎉 runs 清理完成：成功 $ok / 失败 $fail"
 
-      - name: Delete old caches, keep latest 1 per key
+      - name: Delete all caches, keep only newest 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          set -e
+          set -euo pipefail
 
-          tmp=$(mktemp)
-          page=1
-          # 分页拉全量缓存（每页最多 100 条）
-          while :; do
-            resp=$(gh api "repos/$REPO/actions/caches?per_page=100&page=$page")
-            cnt=$(echo "$resp" | jq -r '.actions_caches | length')
-            total=$(echo "$resp" | jq -r '.total_count // 0')
-            echo "$resp" | jq -c '.actions_caches[] | {id, key, last_accessed_at, created_at}' >> "$tmp"
+          echo "=== 清理前 ==="
+          gh api "repos/$REPO/actions/cache/usage" \
+            --jq '"缓存数 \(.active_caches_count) / 占用 \(.active_caches_size_in_bytes/1048576|floor) MB"'
 
-            if [ "$cnt" -eq 0 ]; then break; fi
-            if [ $((page * 100)) -ge "$total" ]; then break; fi
-            page=$((page + 1))
-          done
+          gh api --paginate "repos/$REPO/actions/caches?per_page=100" \
+            | jq -c '.actions_caches[]' > caches.jsonl
 
-          echo "发现缓存条目: $(jq -s 'length' "$tmp") 条"
+          total=$(jq -s 'length' caches.jsonl)
+          echo "共 $total 条缓存"
+          [ "$total" -le 1 ] && { echo "不超过 1 条，无需清理"; exit 0; }
 
-          # 按 key 分组，每组按最近使用时间倒序，跳过最新 1 条
-          to_delete=$(jq -s -r '
-            | sort_by(.last_accessed_at // .created_at // "")
+          echo "保留: $(jq -s -r 'sort_by(.last_accessed_at // .created_at // "") | reverse | .[0] | "\(.key)  (\(.size_in_bytes/1048576|floor) MB)"' caches.jsonl)"
+
+          jq -s -r '
+            sort_by(.last_accessed_at // .created_at // "")
             | reverse
             | .[1:][]
-            | [ (.id|tostring), .key ] | @tsv
-          ' "$tmp")
+            | "\(.id)\t\(.key)\t\((.size_in_bytes/1048576*10|round/10))MB"
+          ' caches.jsonl > to_delete.tsv
 
-          if [ -z "$to_delete" ]; then
-            echo "  ✅ 每个 key 都不超过1条，无需清理"
-          else
-            echo "$to_delete" | while IFS=$'\t' read -r cache_id cache_key; do
-              if gh api -X DELETE "repos/$REPO/actions/caches/$cache_id" >/dev/null 2>&1; then
-                echo "  ✅ 已删除 cache $cache_id ($cache_key)"
-              else
-                echo "  ❌ 删除 cache $cache_id ($cache_key) 失败（可能正被运行中的 job 占用）"
-              fi
-              sleep 0.3   # 轻微限速，避免触发 API 二级速率限制
-            done
-          fi
+          echo "待删除 $(wc -l < to_delete.tsv | tr -d ' ') 条"
 
-          rm -f "$tmp"
-          echo "🎉 缓存清理完成"
+          ok=0; fail=0
+          while IFS=$'\t' read -r id key size; do
+            [ -z "${id:-}" ] && continue
+            out=$(gh api -X DELETE "repos/$REPO/actions/caches/$id" -i 2>&1 || true)
+            case "$(printf '%s' "$out" | head -n1)" in
+              *204*|*200*) echo "  ✅ $id  $key  $size"; ok=$((ok+1)) ;;
+              *400*) echo "  ⏭ $id  $key  被运行中 job 占用，下轮再删" ;;
+              *404*) echo "  ⚠️ $id  已不存在" ;;
+              *)     echo "  ❌ $id  $key → $(printf '%s' "$out" | head -n1)"; fail=$((fail+1)) ;;
+            esac
+          done < to_delete.tsv
+
+          echo "🎉 caches 清理完成：已删 $ok 条，失败 $fail 条"
+          echo "（usage 数字约 5 分钟后刷新；gh cache list 可立即查看）"
