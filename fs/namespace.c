@@ -1269,10 +1269,9 @@ bypass_orig_flow:
 	mnt->mnt.mnt_flags &= ~(MNT_WRITE_HOLD|MNT_MARKED|MNT_INTERNAL);
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
-		if (susfs_is_current_ksu_domain() && (flag & CL_COPY_MNT_NS))
+	// - mnt->mnt_id is assigned without ida when it is being freed in mnt_free_id().
+	if (unlikely(is_mnt_ksu_unshared))
 		mnt->mnt.mnt_flags |= VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT;
-	}
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
 	/* Don't allow unprivileged users to change mount flags */
@@ -3873,6 +3872,9 @@ int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt) {
 	struct mount *mnt = orig_mnt;
 	int mnt_id;
 
+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID)
+		return mnt->mnt_id;
+
 	lock_mount_hash();
 	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
 	mnt_id = mnt->mnt_id;
@@ -3883,6 +3885,12 @@ int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt) {
 /* - To retrieve the non sus vfsmount from vfsmount, takes a reference on &mnt->mnt and mnt->mnt.mnt_root */
 struct vfsmount *susfs_get_non_sus_vfsmnt_from_vfsmnt(struct vfsmount *vfsmnt) {
 	struct mount *mnt = real_mount(vfsmnt);
+
+	if (mnt->mnt_id < DEFAULT_KSU_MNT_ID) {
+		mntget(&mnt->mnt);
+		dget(mnt->mnt.mnt_root);
+		return &mnt->mnt;
+	}
 
 	lock_mount_hash();
 	for (; mnt && mnt->mnt_parent && mnt != mnt->mnt_parent && mnt->mnt_id >= DEFAULT_KSU_MNT_ID; mnt = mnt->mnt_parent) { }
