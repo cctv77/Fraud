@@ -97,7 +97,7 @@ build_target() {
 
     if [ "$ENABLE_KSU" -eq 1 ]; then
         echo "[*] Setting up KernelSU inside build copy..."
-        curl -LSs "https://raw.githubusercontent.com/xiziya/SukiSU_Non-GKI/builtin/kernel/setup.sh" | bash
+        curl -LSs "https://raw.githubusercontent.com/xiziya/SukiSU_Non-GKI/builtin/kernel/setup.sh" | sh
         echo "[+] KernelSU done."
     fi
 
